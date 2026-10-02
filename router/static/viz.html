@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Router Visualization</title>
+<style>
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  background: #0d1117;
+  color: #c9d1d9;
+  padding: 20px;
+}
+
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 24px;
+  color: #f0f6fc;
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 24px 0 12px;
+  color: #f0f6fc;
+}
+
+/* Form styles */
+.form-section {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.warning {
+  background: #2d1e00;
+  border: 1px solid #735c00;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+  color: #f8e3a1;
+  font-weight: 500;
+}
+
+.form-row {
+  margin-bottom: 12px;
+}
+
+label {
+  display: block;
+  margin-bottom: 4px;
+  color: #c9d1d9;
+  font-weight: 500;
+}
+
+input, textarea, select {
+  width: 100%;
+  padding: 8px 12px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+textarea {
+  min-height: 80px;
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+}
+
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+button {
+  background: #238636;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+button:hover {
+  background: #2ea043;
+}
+
+button:active {
+  background: #1f6f2a;
+}
+
+button.secondary {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+}
+
+button.secondary:hover {
+  background: #30363d;
+}
+
+/* Status line */
+.status-line {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 24px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.status-connecting { color: #f85149; }
+.status-live { color: #3fb950; }
+.status-reconnecting { color: #d29922; }
+
+/* Turn columns */
+.turns-container {
+  display: flex;
+  gap: 24px;
+  overflow-x: auto;
+  padding-bottom: 20px;
+}
+
+.turn-column {
+  min-width: 600px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.turn-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #30363d;
+}
+
+.turn-id {
+  font-weight: 600;
+  color: #58a6ff;
+  margin-bottom: 8px;
+}
+
+.query-text {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+  font-family: ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.query-meta {
+  font-size: 12px;
+  color: #8b949e;
+}
+
+/* Attempt block */
+.attempt-block {
+  margin-bottom: 20px;
+}
+
+.attempt-header {
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #f0f6fc;
+}
+
+.arm-cards {
+  display: grid;
+  gap: 8px;
+}
+
+.arm-card {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 10px;
+  position: relative;
+}
+
+.arm-card.chosen {
+  border-color: #d29922;
+  border-width: 2px;
+}
+
+.arm-card.ineligible {
+  opacity: 0.5;
+  background: #010409;
+}
+
+.arm-name {
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.arm-name .star {
+  color: #d29922;
+}
+
+.arm-name .full-name {
+  font-size: 11px;
+  color: #8b949e;
+  font-weight: 400;
+}
+
+.bars {
+  margin-bottom: 8px;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.bar-label {
+  width: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b949e;
+}
+
+.bar-track {
+  flex: 1;
+  height: 16px;
+  background: #161b22;
+  border-radius: 3px;
+  position: relative;
+  margin-right: 8px;
+}
+
+/* Bars diverge from a centre baseline because p is signed. width:0 is an
+   explicit floor: if a computed width were ever invalid and dropped, the
+   fallback must be an EMPTY bar, never width:auto -- which fills the track and
+   makes the most negative arm look like the strongest one. */
+.bar-fill {
+  position: absolute;
+  top: 0;
+  width: 0;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease, left 0.3s ease;
+}
+
+.bar-zero {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+  background: #30363d;
+}
+
+.bar-fill.p-bar {
+  background: #58a6ff;
+}
+
+.bar-fill.e-bar {
+  background: #bc8cff;
+}
+
+/* A negative contribution reads as a distinct colour, not just a mirrored
+   position -- position alone is easy to misread at a glance. */
+.bar-fill.p-bar.negative {
+  background: #f0883e;
+}
+
+.bar-fill.e-bar.negative {
+  background: #f0883e;
+}
+
+.bar-value {
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  color: #c9d1d9;
+  min-width: 60px;
+}
+
+.arm-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  font-size: 12px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-label {
+  color: #8b949e;
+  font-size: 10px;
+}
+
+.metric-value {
+  font-family: ui-monospace, monospace;
+  font-weight: 500;
+}
+
+.metric-value.winner {
+  color: #d29922;
+}
+
+.ineligible-reason {
+  color: #f85149;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+/* Called section */
+.called-section {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.called-arm {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.called-text {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 6px;
+}
+
+.called-meta {
+  font-size: 11px;
+  color: #8b949e;
+}
+
+/* Verdict */
+.verdict-node {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.verdict-node.verdict-1 {
+  background: #0f3a1f;
+  border-color: #2ea043;
+  color: #3fb950;
+}
+
+.verdict-node.verdict-0 {
+  background: #3a1f1f;
+  border-color: #f85149;
+  color: #ff7b72;
+}
+
+.verdict-node.verdict-null {
+  background: #2d2408;
+  border-color: #d29922;
+  color: #f8e3a1;
+}
+
+/* Update card */
+.update-card {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.update-header {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #58a6ff;
+}
+
+.update-pulls {
+  font-size: 12px;
+  color: #8b949e;
+  margin-bottom: 8px;
+}
+
+.update-stats {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+
+.update-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stat-label {
+  width: 40px;
+  font-weight: 600;
+  color: #8b949e;
+}
+
+.stat-arrow {
+  color: #58a6ff;
+}
+
+.no-update {
+  color: #8b949e;
+  font-style: italic;
+}
+
+/* Turn end */
+.turn-end {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 12px;
+  color: #8b949e;
+}
+
+/* Delayed updates section */
+.delayed-section {
+  margin-top: 24px;
+}
+
+.delayed-update {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.delayed-header {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #bc8cff;
+}
+
+.delayed-not-applied {
+  color: #f85149;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+/* Judge section */
+.judge-section {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.judge-results {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.judge-stat {
+  text-align: center;
+}
+
+.judge-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #58a6ff;
+}
+
+.judge-label {
+  font-size: 12px;
+  color: #8b949e;
+  margin-top: 4px;
+}
+
+.error-message {
+  background: #3a1f1f;
+  border: 1px solid #f85149;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 12px 0;
+  color: #ff7b72;
+}
+
+.called-error {
+  color: #ff7b72;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  margin-top: 6px;
+  word-break: break-word;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Router Visualization</h1>
+
+  <div class="form-section">
+    <div class="warning">
+      Each submission calls AWS Bedrock and spends real money (fractions of a cent).
+    </div>
+
+    <form id="submitForm">
+      <div class="form-row">
+        <label>Conversation ID</label>
+        <input type="text" id="conversationId" value="viz-1" required>
+      </div>
+
+      <div class="form-row">
+        <label>Query</label>
+        <textarea id="query" required>What is 17 * 23? Put your final answer in \boxed{}.</textarea>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>Task Type</label>
+          <select id="taskType">
+            <option value="code">code</option>
+            <option value="structured">structured</option>
+            <option value="math" selected>math</option>
+            <option value="prose">prose</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <label>Expected (optional)</label>
+          <input type="text" id="expected" value="391">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label>Budget</label>
+        <input type="number" id="budget" value="0.02" step="0.001" min="0" required>
+      </div>
+
+      <button type="submit">Submit</button>
+    </form>
+  </div>
+
+  <div class="status-line">
+    <span>SSE: <span id="sseStatus" class="status-connecting">connecting</span></span>
+    <span style="margin-left: 16px;">Seq: <span id="seqNum">0</span></span>
+    <span style="margin-left: 16px;" title="Events this tab never received, counted from gaps in seq.">Dropped here: <span id="droppedCount">0</span></span>
+    <span style="margin-left: 16px;" title="Process-wide drops across every connected tab, reported by the server.">Dropped (all tabs): <span id="droppedAll">0</span></span>
+  </div>
+
+  <div class="judge-section">
+    <h2>Judge</h2>
+    <button type="button" id="judgeBtn" class="secondary">Run judge batch</button>
+    <div id="judgeResults"></div>
+  </div>
+
+  <h2>Turns</h2>
+  <div id="turnsContainer" class="turns-container"></div>
+
+  <div class="delayed-section">
+    <h2>Delayed rewards (judge)</h2>
+    <div id="delayedContainer"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  let eventSource = null;
+  let highestSeq = 0;
+  let droppedHere = 0;
+  let turns = new Map();
+  let decisionIdToTurnId = new Map();
+  let reconnectTimeout = null;
+
+  const statusSpan = document.getElementById('sseStatus');
+  const seqSpan = document.getElementById('seqNum');
+  const droppedSpan = document.getElementById('droppedCount');
+  const droppedAllSpan = document.getElementById('droppedAll');
+  const turnsContainer = document.getElementById('turnsContainer');
+  const delayedContainer = document.getElementById('delayedContainer');
+
+  function setStatus(state) {
+    statusSpan.textContent = state;
+    statusSpan.className = 'status-' + state;
+  }
+
+  function openSSE(since) {
+    if (eventSource) {
+      eventSource.close();
+    }
+
+    const url = since > 0 ? `/viz/stream?since=${since}` : '/viz/stream';
+    eventSource = new EventSource(url);
+
+    eventSource.onopen = function() {
+      setStatus('live');
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+    };
+
+    eventSource.onerror = function() {
+      setStatus('reconnecting');
+      eventSource.close();
+      reconnectTimeout = setTimeout(() => openSSE(highestSeq), 2000);
+    };
+
+    eventSource.onmessage = function(e) {
+      if (e.data.trim() === '') return;
+      try {
+        const record = JSON.parse(e.data);
+        handleEvent(record);
+      } catch (err) {
+        console.error('Failed to parse event:', err, e.data);
+      }
+    };
+  }
+
+  function handleEvent(record) {
+    const { seq, event, payload } = record;
+
+    // seq is unique and monotonic per process, so it is the only safe identity
+    // for an event. Rendering the same seq twice is not a cosmetic glitch: a
+    // repeated `scored` appends a second attempt block, which shifts every
+    // later answer by one attempt and shows a cascade that never happened.
+    if (seq != null) {
+      if (seq <= highestSeq) {
+        return;
+      }
+      // A jump of more than 1 means this tab never received the events in
+      // between -- its queue overflowed and the hub dropped them (bounded at
+      // 256, dropping rather than blocking so a slow tab cannot stall a live
+      // Bedrock turn). Count OUR gaps: the hub's own counter is process-wide
+      // and would make this tab display another tab's losses.
+      if (highestSeq > 0 && seq > highestSeq + 1) {
+        droppedHere += seq - highestSeq - 1;
+        droppedSpan.textContent = droppedHere;
+      }
+      highestSeq = seq;
+      seqSpan.textContent = highestSeq;
+    }
+
+    const turnId = payload.turn_id;
+
+    switch (event) {
+      case 'turn_start':
+        handleTurnStart(payload);
+        break;
+      case 'scored':
+        handleScored(payload);
+        break;
+      case 'called':
+        handleCalled(payload);
+        break;
+      case 'verified':
+        handleVerified(payload);
+        break;
+      case 'updated':
+        handleUpdated(payload);
+        break;
+      case 'turn_end':
+        handleTurnEnd(payload);
+        break;
+      case 'delayed_update':
+        handleDelayedUpdate(payload);
+        break;
+    }
+  }
+
+  function handleTurnStart(payload) {
+    const turnId = payload.turn_id;
+
+    const turnColumn = document.createElement('div');
+    turnColumn.className = 'turn-column';
+    turnColumn.dataset.turnId = turnId;
+
+    const header = document.createElement('div');
+    header.className = 'turn-header';
+
+    const turnIdDiv = document.createElement('div');
+    turnIdDiv.className = 'turn-id';
+    turnIdDiv.textContent = `Turn ${turnId}`;
+
+    const queryDiv = document.createElement('div');
+    queryDiv.className = 'query-text';
+    queryDiv.textContent = payload.query;
+
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'query-meta';
+    metaDiv.textContent = `${payload.task_type} | budget $${payload.budget.toFixed(4)} | ${payload.conversation_id}`;
+
+    header.appendChild(turnIdDiv);
+    header.appendChild(queryDiv);
+    header.appendChild(metaDiv);
+    turnColumn.appendChild(header);
+
+    turnsContainer.appendChild(turnColumn);
+
+    turns.set(turnId, {
+      column: turnColumn,
+      attempts: []
+    });
+  }
+
+  function shortenArmName(fullName) {
+    return fullName.replace(/^us\./, '').replace(/-(v[0-9]:?[0-9]?)$/, '');
+  }
+
+  function handleScored(payload) {
+    const turnId = payload.turn_id;
+    const turn = turns.get(turnId);
+    if (!turn) return;
+
+    const attemptBlock = document.createElement('div');
+    attemptBlock.className = 'attempt-block';
+
+    const attemptHeader = document.createElement('div');
+    attemptHeader.className = 'attempt-header';
+    attemptHeader.textContent = `Attempt ${payload.depth + 1} — budget $${payload.remaining.toFixed(4)}`;
+
+    attemptBlock.appendChild(attemptHeader);
+
+    const armCards = document.createElement('div');
+    armCards.className = 'arm-cards';
+
+    const scores = payload.scores;
+    const armNames = Object.keys(scores);
+
+    armNames.sort((a, b) => {
+      const sa = scores[a].selection_score;
+      const sb = scores[b].selection_score;
+      if (sa === null && sb === null) return 0;
+      if (sa === null) return 1;
+      if (sb === null) return -1;
+      return sb - sa;
+    });
+
+    // Scale by max ABSOLUTE value: p is signed, so max() alone would be
+    // negative (or zero) when no arm has a positive p, collapsing every bar to
+    // 0% and hiding the one arm that actually carries learned signal.
+    const pScale = Math.max(...armNames.map(name => Math.abs(scores[name].p)));
+    const eScale = Math.max(...armNames.map(name => Math.abs(scores[name].e)));
+
+    armNames.forEach(armName => {
+      const armData = scores[armName];
+      const card = document.createElement('div');
+      card.className = 'arm-card';
+      if (armName === payload.chosen) {
+        card.classList.add('chosen');
+      }
+      if (!armData.eligible) {
+        card.classList.add('ineligible');
+      }
+
+      const nameDiv = document.createElement('div');
+      nameDiv.className = 'arm-name';
+      if (armName === payload.chosen) {
+        const star = document.createElement('span');
+        star.className = 'star';
+        star.textContent = '★';
+        nameDiv.appendChild(star);
+      }
+      const shortName = document.createElement('span');
+      shortName.textContent = shortenArmName(armName);
+      shortName.title = armName;
+      nameDiv.appendChild(shortName);
+
+      card.appendChild(nameDiv);
+
+      const barsDiv = document.createElement('div');
+      barsDiv.className = 'bars';
+
+      const pBar = createBar('p', armData.p, pScale, 'p-bar');
+      const eBar = createBar('e', armData.e, eScale, 'e-bar');
+      barsDiv.appendChild(pBar);
+      barsDiv.appendChild(eBar);
+
+      card.appendChild(barsDiv);
+
+      const metricsDiv = document.createElement('div');
+      metricsDiv.className = 'arm-metrics';
+
+      const ucbMetric = createMetric('ucb', formatNumber(armData.ucb));
+      const costMetric = createMetric('cost', '$' + armData.cost_estimate.toExponential(2));
+      const scoreMetric = createMetric('score', armData.selection_score === null ? '—' : formatNumber(armData.selection_score));
+      if (armName === payload.chosen) {
+        scoreMetric.querySelector('.metric-value').classList.add('winner');
+      }
+
+      metricsDiv.appendChild(ucbMetric);
+      metricsDiv.appendChild(costMetric);
+      metricsDiv.appendChild(scoreMetric);
+
+      card.appendChild(metricsDiv);
+
+      if (!armData.eligible) {
+        const reasonDiv = document.createElement('div');
+        reasonDiv.className = 'ineligible-reason';
+        reasonDiv.textContent = armData.reason;
+        card.appendChild(reasonDiv);
+      }
+
+      armCards.appendChild(card);
+    });
+
+    attemptBlock.appendChild(armCards);
+    turn.column.appendChild(attemptBlock);
+
+    turn.attempts.push({
+      depth: payload.depth,
+      block: attemptBlock,
+      chosen: payload.chosen
+    });
+  }
+
+  function createBar(label, value, scale, className) {
+    const row = document.createElement('div');
+    row.className = 'bar-row';
+
+    const labelDiv = document.createElement('span');
+    labelDiv.className = 'bar-label';
+    labelDiv.textContent = label;
+
+    const track = document.createElement('div');
+    track.className = 'bar-track';
+
+    // p is a signed dot product (x . theta) and routinely goes negative -- I
+    // measured a negative p in 13% of randomized turns against the real
+    // ContextBuilder. So the bar is DIVERGING about a zero baseline, not a
+    // left-anchored fraction.
+    //
+    // The previous version computed (value/max)*100, which for a negative
+    // value produced a negative CSS percentage. That declaration is invalid
+    // and dropped, and .bar-fill declares no width of its own, so it fell
+    // back to width:auto -- filling the whole track. The worst arm rendered
+    // identically to the best one. Bars exist to be read at a glance, so an
+    // inverted bar is worse than no bar.
+    //
+    // `scale` is max(|value|) across the seven arms in this attempt, so the
+    // widest bar always spans half the track and every bar stays comparable.
+    const half = 50;
+    const magnitude = scale > 0 ? (Math.abs(value) / scale) * half : 0;
+
+    const zero = document.createElement('div');
+    zero.className = 'bar-zero';
+    track.appendChild(zero);
+
+    const fill = document.createElement('div');
+    fill.className = 'bar-fill ' + className;
+    if (value < 0) {
+      fill.classList.add('negative');
+      fill.style.width = magnitude + '%';
+      fill.style.left = (half - magnitude) + '%';
+    } else {
+      fill.style.width = magnitude + '%';
+      fill.style.left = half + '%';
+    }
+
+    track.appendChild(fill);
+
+    const valueDiv = document.createElement('span');
+    valueDiv.className = 'bar-value';
+    valueDiv.textContent = formatNumber(value);
+
+    row.appendChild(labelDiv);
+    row.appendChild(track);
+    row.appendChild(valueDiv);
+
+    return row;
+  }
+
+  function createMetric(label, value) {
+    const div = document.createElement('div');
+    div.className = 'metric';
+
+    const labelDiv = document.createElement('div');
+    labelDiv.className = 'metric-label';
+    labelDiv.textContent = label;
+
+    const valueDiv = document.createElement('div');
+    valueDiv.className = 'metric-value';
+    valueDiv.textContent = value;
+
+    div.appendChild(labelDiv);
+    div.appendChild(valueDiv);
+
+    return div;
+  }
+
+  function formatNumber(num) {
+    if (typeof num !== 'number') return String(num);
+    if (Math.abs(num) < 0.01 || Math.abs(num) > 1000) {
+      return num.toExponential(2);
+    }
+    return num.toFixed(3);
+  }
+
+  function handleCalled(payload) {
+    const turnId = payload.turn_id;
+    const turn = turns.get(turnId);
+    if (!turn) return;
+
+    const attempt = turn.attempts[payload.depth];
+    if (!attempt) return;
+
+    const calledDiv = document.createElement('div');
+    calledDiv.className = 'called-section';
+
+    const armDiv = document.createElement('div');
+    armDiv.className = 'called-arm';
+    armDiv.textContent = `Picked ${shortenArmName(payload.arm)}`;
+
+    const textDiv = document.createElement('div');
+    textDiv.className = 'called-text';
+    let displayText = payload.text || '';
+    if (displayText.length > 600) {
+      textDiv.textContent = displayText.substring(0, 600) + '…';
+    } else {
+      textDiv.textContent = displayText;
+    }
+
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'called-meta';
+    const parts = [];
+    if (payload.usage && payload.usage.inputTokens != null) {
+      parts.push(`${payload.usage.inputTokens}in/${payload.usage.outputTokens}out`);
+    }
+    if (payload.latency_ms != null) {
+      parts.push(`${payload.latency_ms.toFixed(0)}ms`);
+    }
+    if (payload.cost != null) {
+      parts.push(`$${payload.cost.toExponential(2)}`);
+    }
+    if (displayText.length > 600) {
+      parts.push(`(${displayText.length} chars, truncated)`);
+    }
+    metaDiv.textContent = parts.join(' · ');
+
+    calledDiv.appendChild(armDiv);
+    calledDiv.appendChild(textDiv);
+    calledDiv.appendChild(metaDiv);
+
+    if (payload.error) {
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'called-error';
+      errorDiv.textContent = `error: ${payload.error}`;
+      calledDiv.appendChild(errorDiv);
+      calledDiv.classList.add('has-error');
+    }
+
+    attempt.block.appendChild(calledDiv);
+  }
+
+  function handleVerified(payload) {
+    const turnId = payload.turn_id;
+    const turn = turns.get(turnId);
+    if (!turn) return;
+
+    const attempt = turn.attempts[payload.depth];
+    if (!attempt) return;
+
+    const verdictDiv = document.createElement('div');
+    verdictDiv.className = 'verdict-node';
+
+    const verdict = payload.verdict;
+    if (verdict === 1) {
+      verdictDiv.classList.add('verdict-1');
+      verdictDiv.textContent = 'verified ✓';
+    } else if (verdict === 0) {
+      verdictDiv.classList.add('verdict-0');
+      verdictDiv.textContent = 'wrong → escalating';
+    } else {
+      verdictDiv.classList.add('verdict-null');
+      verdictDiv.textContent = 'cannot tell → deferred to judge';
+    }
+
+    attempt.block.appendChild(verdictDiv);
+    attempt.verdictNode = verdictDiv;
+    attempt.learn = payload.learn;
+  }
+
+  function handleUpdated(payload) {
+    const turnId = payload.turn_id;
+    const turn = turns.get(turnId);
+    if (!turn) return;
+
+    const attempt = turn.attempts[payload.depth];
+    if (!attempt) return;
+
+    const updateDiv = document.createElement('div');
+    updateDiv.className = 'update-card';
+
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'update-header';
+    headerDiv.textContent = `Bandit update — ${shortenArmName(payload.arm)}`;
+
+    const pullsDiv = document.createElement('div');
+    pullsDiv.className = 'update-pulls';
+    pullsDiv.textContent = `pulls ${payload.pulls_before} → ${payload.pulls_after} | reward ${payload.reward}`;
+
+    const statsDiv = document.createElement('div');
+    statsDiv.className = 'update-stats';
+
+    statsDiv.appendChild(createUpdateStat('p', payload.before.p, payload.after.p));
+    statsDiv.appendChild(createUpdateStat('e', payload.before.e, payload.after.e));
+    statsDiv.appendChild(createUpdateStat('ucb', payload.before.ucb, payload.after.ucb));
+
+    updateDiv.appendChild(headerDiv);
+    updateDiv.appendChild(pullsDiv);
+    updateDiv.appendChild(statsDiv);
+
+    attempt.block.appendChild(updateDiv);
+  }
+
+  function createUpdateStat(label, before, after) {
+    const div = document.createElement('div');
+    div.className = 'update-stat';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'stat-label';
+    labelSpan.textContent = label;
+
+    const beforeSpan = document.createElement('span');
+    beforeSpan.textContent = formatNumber(before);
+
+    const arrow = document.createElement('span');
+    arrow.className = 'stat-arrow';
+    arrow.textContent = '→';
+
+    const afterSpan = document.createElement('span');
+    afterSpan.textContent = formatNumber(after);
+
+    div.appendChild(labelSpan);
+    div.appendChild(beforeSpan);
+    div.appendChild(arrow);
+    div.appendChild(afterSpan);
+
+    return div;
+  }
+
+  function handleTurnEnd(payload) {
+    const turnId = payload.turn_id;
+    const turn = turns.get(turnId);
+    if (!turn) return;
+
+    if (payload.decision_ids && payload.decision_ids.length > 0) {
+      payload.decision_ids.forEach(decId => {
+        decisionIdToTurnId.set(decId, turnId);
+      });
+    }
+
+    const lastAttempt = turn.attempts[turn.attempts.length - 1];
+    if (lastAttempt && lastAttempt.verdictNode && lastAttempt.learn === false) {
+      const noUpdateDiv = document.createElement('div');
+      noUpdateDiv.className = 'update-card';
+
+      const msg = document.createElement('div');
+      msg.className = 'no-update';
+      msg.textContent = 'No bandit update (learn=false)';
+
+      noUpdateDiv.appendChild(msg);
+      lastAttempt.block.appendChild(noUpdateDiv);
+    }
+
+    const endDiv = document.createElement('div');
+    endDiv.className = 'turn-end';
+    endDiv.textContent = `status: ${payload.status} | depth: ${payload.cascade_depth} | cost: $${payload.cost != null ? payload.cost.toExponential(2) : 'unknown'}`;
+
+    turn.column.appendChild(endDiv);
+  }
+
+  function handleDelayedUpdate(payload) {
+    const decisionId = payload.decision_id;
+    const turnId = decisionIdToTurnId.get(decisionId);
+
+    if (turnId && turns.has(turnId)) {
+      const turn = turns.get(turnId);
+      const updateDiv = createDelayedUpdateCard(payload);
+      turn.column.appendChild(updateDiv);
+    } else {
+      const updateDiv = createDelayedUpdateCard(payload);
+      delayedContainer.appendChild(updateDiv);
+    }
+  }
+
+  function createDelayedUpdateCard(payload) {
+    const div = document.createElement('div');
+    div.className = 'delayed-update';
+
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'delayed-header';
+    headerDiv.textContent = `Delayed update — ${shortenArmName(payload.arm)} (decision ${payload.decision_id})`;
+
+    div.appendChild(headerDiv);
+
+    if (payload.applied) {
+      const pullsDiv = document.createElement('div');
+      pullsDiv.className = 'update-pulls';
+      pullsDiv.textContent = `pulls ${payload.pulls_before} → ${payload.pulls_after} | reward ${payload.reward}`;
+
+      const statsDiv = document.createElement('div');
+      statsDiv.className = 'update-stats';
+
+      statsDiv.appendChild(createUpdateStat('p', payload.before.p, payload.after.p));
+      statsDiv.appendChild(createUpdateStat('e', payload.before.e, payload.after.e));
+      statsDiv.appendChild(createUpdateStat('ucb', payload.before.ucb, payload.after.ucb));
+
+      div.appendChild(pullsDiv);
+      div.appendChild(statsDiv);
+    } else {
+      const notAppliedDiv = document.createElement('div');
+      notAppliedDiv.className = 'delayed-not-applied';
+      notAppliedDiv.textContent = payload.reason || 'Not applied';
+      div.appendChild(notAppliedDiv);
+    }
+
+    return div;
+  }
+
+  document.getElementById('submitForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const conversationId = document.getElementById('conversationId').value;
+    const query = document.getElementById('query').value;
+    const taskType = document.getElementById('taskType').value;
+    const expected = document.getElementById('expected').value;
+    const budget = parseFloat(document.getElementById('budget').value);
+
+    const body = {
+      conversation_id: conversationId,
+      query: query,
+      task_type: taskType,
+      budget: budget
+    };
+
+    if (expected) {
+      body.expected = expected;
+    }
+
+    try {
+      const response = await fetch('/v1/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.textContent = `Error ${response.status}: ${text}`;
+        document.querySelector('.form-section').appendChild(errorDiv);
+        setTimeout(() => errorDiv.remove(), 5000);
+        return;
+      }
+
+      const result = await response.json();
+    } catch (err) {
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'error-message';
+      errorDiv.textContent = 'Request failed: ' + err.message;
+      document.querySelector('.form-section').appendChild(errorDiv);
+      setTimeout(() => errorDiv.remove(), 5000);
+    }
+  });
+
+  document.getElementById('judgeBtn').addEventListener('click', async function() {
+    const btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+
+    try {
+      const response = await fetch('/admin/judge', {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status}: ${text}`);
+      }
+
+      const result = await response.json();
+
+      const resultsDiv = document.getElementById('judgeResults');
+      while (resultsDiv.firstChild) {
+        resultsDiv.removeChild(resultsDiv.firstChild);
+      }
+
+      const gridDiv = document.createElement('div');
+      gridDiv.className = 'judge-results';
+
+      ['considered', 'judged', 'skipped', 'ambiguous', 'errors'].forEach(key => {
+        const statDiv = document.createElement('div');
+        statDiv.className = 'judge-stat';
+
+        const valueDiv = document.createElement('div');
+        valueDiv.className = 'judge-value';
+        valueDiv.textContent = result[key] || 0;
+
+        const labelDiv = document.createElement('div');
+        labelDiv.className = 'judge-label';
+        labelDiv.textContent = key;
+
+        statDiv.appendChild(valueDiv);
+        statDiv.appendChild(labelDiv);
+        gridDiv.appendChild(statDiv);
+      });
+
+      resultsDiv.appendChild(gridDiv);
+    } catch (err) {
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'error-message';
+      errorDiv.textContent = 'Judge failed: ' + err.message;
+      document.getElementById('judgeResults').appendChild(errorDiv);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Run judge batch';
+    }
+  });
+
+  // Hits /viz/stats, not /viz/events?since=0: the latter serialises the entire
+  // ring (measured 617 KB) to read three integers, holding the observer's lock
+  // and a threadpool thread that Router.complete shares, every 5 s per tab.
+  //
+  // `dropped` here is the PROCESS-wide count across all tabs, which is why it
+  // is labelled separately from this tab's own gap count -- attributing another
+  // tab's losses to this one sends you debugging the wrong client.
+  async function fetchStats() {
+    try {
+      const response = await fetch('/viz/stats');
+      const data = await response.json();
+      if (data.dropped != null) {
+        droppedAllSpan.textContent = data.dropped;
+      }
+    } catch (err) {
+      console.error('Failed to fetch stats:', err);
+    }
+  }
+
+  setInterval(fetchStats, 5000);
+  fetchStats();
+
+  openSSE(0);
+})();
+</script>
+</body>
+</html>

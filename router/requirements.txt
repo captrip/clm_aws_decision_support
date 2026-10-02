@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+numpy
+boto3
+# The AWS profile this router uses (258574424891) authenticates via botocore's
+# login_session provider, which needs awscrt. The AWS CLI bundles it; a venv
+# does not, so without this every Bedrock call fails at credential resolution
+# with MissingDependencyException -- before it ever reaches a model.
+botocore[crt]
+sentence-transformers
+sympy
+pytest
+httpx

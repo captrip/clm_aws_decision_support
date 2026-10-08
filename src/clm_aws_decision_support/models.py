@@ -61,6 +61,11 @@ class ModelSpec:
         if self.provider is ProviderKind.AZURE_OPENAI and not self.deployment:
             raise ValueError("deployment is required for azure_openai models")
 
+    def estimated_cost(self, usage: Usage) -> float:
+        return(
+            usage.input_tokens * self.input_cost_per_million / 1e6
+            + usage.output_tokens * self.output_cost_per_million / 1e6
+        )
 
 @dataclass(frozen=True, slots=True)
 class GraderSpec:

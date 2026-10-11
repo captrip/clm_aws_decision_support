@@ -47,51 +47,53 @@ def ask(
         estimated_costs = {
             m: (linucb.estimate_cost(m) if linucb is not None else 0.0) for m in eligible
         }
-        if budget is not None:
-            affordable = tuple(m for m in eligible is estimated_costs[m]<= budget)
-            if not affordable:
-                raise InvalidSelectionError(
-                    f"every eligible model's estimated cost exceeds the budget"
-                    f"{budget}: {estimated_costs!r}"
-                )
-            else:
-                affordable = eligible
-
-            features = feature_fn(question, step, len(tried))
-            context = DecisionContext(
-                question=question,
-                step=step,
-                failed_models=tuple(tried),
-                eligible_models=affordable,
-                budget=budget,
-                estimated_costs=estimated_costs,
-                features=features
+        affordable = (
+            eligible
+            if budget is None
+            else tuple(model for model in eligible if estimated_costs[model] <= budget)
+        )
+        if not affordable:
+            raise InvalidSelectionError(
+                f"every eligible model's estimated cost exceeds the budget "
+                f"{budget}: {estimated_costs!r}"
             )
 
-            selection = policy.select(context)
-            model = selection.model
-            required_eligible(model=model, context=context, policy=selection.policy)
+        features = feature_fn(question, step, len(tried))
+        context = DecisionContext(
+            question=question,
+            step=step,
+            failed_models=tuple(tried),
+            eligible_models=affordable,
+            budget=budget,
+            estimated_costs=estimated_costs,
+            features=features
+        )
 
-            try:
-                result = router.invoke(model, question, max_tokens=max_token, temperature=temprature)
-            except ProviderInvocationError as error:
-                tried.append(model)
-                last_error = str(error)
-                continue
+        selection = policy.select(context)
+        model = selection.model
+        required_eligible(model=model, context=context, policy=selection.policy)
 
-            model_spec = registry[model]
-            cost = calculate_cost(model_spec,result.usage)
-            return AskResult(
-                model=model,
-                provider=model_spec.provider.value,
-                answer=result.text,
-                cost=cost,
-                usage=result.usage,
-                selection=selection,
-                feature=features,
-                retried_models=tuple(tried)
-            )
-        raise InvalidSelectionError(
-            f"every eligible model's estimated cost exceeds the budget"
-            f"{budget}: {estimated_costs!r}")
+        try:
+            result = router.invoke(model, question, max_tokens=max_token, temperature=temprature)
+        except ProviderInvocationError as error:
+            tried.append(model)
+            last_error = str(error)
+            continue
+
+        model_spec = registry[model]
+        cost = calculate_cost(model_spec,result.usage)
+        return AskResult(
+            model=model,
+            provider=model_spec.provider.value,
+            answer=result.text,
+            cost=cost,
+            usage=result.usage,
+            selection=selection,
+            feature=features,
+            retried_models=tuple(tried)
+        )
+
+    raise InvalidSelectionError(
+        f"every model failed with an infrastructure error: {last_error}"
+    )
     

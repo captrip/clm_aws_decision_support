@@ -54,7 +54,7 @@ class Cascade:
         self._max_tokens = max_tokens
         self._temprature = temprature
         self._linucb = linucb
-        self._feture_fn = feature_fn
+        self._feature_fn = feature_fn
 
     def run(
             self,
@@ -72,44 +72,51 @@ class Cascade:
             if not eligible:
                 break
 
-            estimated_cost = {m: self._estimated_cost(m) for m in eligible}
-            if remaining is not None:
-                affordable = tuple(m for m in eligible if estimated_cost[m]<= remaining)
-                if not affordable:
-                    raise InvalidSelectionError(
-                        f"every eligible model's estimated cost exceeds the remaining"
-                        f"budget {remaining}: {estimated_cost!r}"
-                    )
-                else:
-                    affordable = eligible
-
-                features = self._feture_fn(question.text, step, len(failed_models))
-                context = DecisionContext(
-                    question=question.text,
-                    step=step,
-                    failed_models=tuple(failed_models),
-                    eligible_models=affordable,
-                    budget=remaining,
-                    estimated_costs=estimated_cost,
-                    features=features
+            estimated_costs = {model: self._estimate_cost(model) for model in eligible}
+            affordable = (
+                eligible
+                if remaining is None
+                else tuple(
+                    model for model in eligible if estimated_costs[model] <= remaining
+                )
+            )
+            if not affordable:
+                raise InvalidSelectionError(
+                    f"every eligible model's estimated cost exceeds the remaining "
+                    f"budget {remaining}: {estimated_costs!r}"
                 )
 
-                selection = self._policy.select(context=context)
-                model = selection.model
-                required_eligible(model=model, context=context, policy=selection.policy)
+            features = self._feature_fn(question.text, step, len(failed_models))
+            context = DecisionContext(
+                question=question.text,
+                step=step,
+                failed_models=tuple(failed_models),
+                eligible_models=affordable,
+                budget=remaining,
+                estimated_costs=estimated_costs,
+                features=features
+            )
 
-                attempt, reward, cost = self._invoke_and_grade(step, model, selection, question, expected_answer)
-                attempts.append(attempt)
-                total_cost += cost
-                if remaining is not None:
-                    remaining -= cost
-                if self._linucb is not None:
-                    self._linucb.update(model, features, reward=float(reward), cost=cost)
+            selection = self._policy.select(context=context)
+            model = selection.model
+            required_eligible(model=model, context=context, policy=selection.policy)
 
-                if reward == 1:
-                    return QuestionResult(attempts= tuple(attempts), success=False, total_cost=total_cost)
+            attempt, reward, cost = self._invoke_and_grade(
+                step, model, selection, question, expected_answer
+            )
+            attempts.append(attempt)
+            total_cost += cost
+            if remaining is not None:
+                remaining -= cost
+            if self._linucb is not None:
+                self._linucb.update(model, features, reward=float(reward), cost=cost)
 
-                failed_models.append(model)
+            if reward == 1:
+                return QuestionResult(
+                    attempts=tuple(attempts), success=True, total_cost=total_cost
+                )
+
+            failed_models.append(model)
         return QuestionResult(attempts=tuple(attempts), success=False, total_cost=total_cost)
 
     def _estimate_cost(self, model: str) -> float:

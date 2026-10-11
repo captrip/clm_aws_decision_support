@@ -11,8 +11,8 @@ import numpy as np
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS deployments (
-    logical_name            TEXT    PRIMARY_KEY,
-    provier                 TEXT    NOT NULL,
+    logical_name            TEXT    PRIMARY KEY,
+    provider                TEXT    NOT NULL,
     model_id                TEXT,
     deployment              TEXT,
     input_cost_per_million  REAL    NOT NULL,
@@ -40,6 +40,24 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_prefix  TEXT NOT NULL,
     revoked     INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS api_usage (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    api_key_id      TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    decision_id     TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    policy          TEXT NOT NULL,
+    input_tokens    INTEGER NOT NULL,
+    output_tokens   INTEGER NOT NULL,
+    cost            REAL NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_api_usage_user_created
+    ON api_usage (user_id, created_at);
+CREATE TABLE IF NOT EXISTS app_metadata (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -108,10 +126,28 @@ class Store:
         with self._lock:
             query = "SELECT * FROM deployments"
             if active_only:
-                query += "WHERE active = 1"
+                query += " WHERE active = 1"
             query += " ORDER BY created_at"
             rows = self.conn.execute(query).fetchall()
             return [dict(row) for row in rows]
+
+    def get_metadata(self, key: str) -> str | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM app_metadata WHERE key = ?", (key,)
+            ).fetchone()
+            return row["value"] if row is not None else None
+
+    def set_metadata(self, key: str, value: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                """
+                INSERT INTO app_metadata (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
+            self.conn.commit()
 
     def deactivate_deployment(self, logical_name: str) -> bool:
         with self._lock:
@@ -140,7 +176,7 @@ class Store:
                 INSERT INTO decisions (decision_id, question, model, policy, features, cost, reward, source)
                 VALUES (?,?,?,?,?,?,?,?)
                 """,
-                (decision_id, question, model, policy, vector.tobytes(). float(cost), reward, source),
+                (decision_id, question, model, policy, vector.tobytes(), float(cost), reward, source),
             )
             self.conn.commit()
 
@@ -155,7 +191,7 @@ class Store:
     def get_decision(self, decision_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self.conn.execute(
-                "SELECT * FROM decision WHERE decision_id = ?", (decision_id,)
+                "SELECT * FROM decisions WHERE decision_id = ?", (decision_id,)
             ).fetchone()
             return self._row_to_decision(row)
 
@@ -179,7 +215,7 @@ class Store:
         with self._lock:
             self.conn.execute(
                 """
-                INSERT INTO api_keys (id, usr_id, label, key_hash, key_prefix)
+                INSERT INTO api_keys (id, user_id, label, key_hash, key_prefix)
                 VALUES (?,?,?,?,?)
                 """,
                 (key_id, user_id, label, key_hash, raw_key[:11]),
@@ -197,7 +233,7 @@ class Store:
     def list_api_keys(self, user_id: str) -> list[dict[str, Any]]:
         with self._lock:
             rows = self.conn.execute(
-                "SELECT * FROM api_keys WHERE user_id = ? ORDER BY created_at", (user_id)
+                "SELECT * FROM api_keys WHERE user_id = ? ORDER BY created_at", (user_id,)
             ).fetchall()
             return [self._row_to_api_key(row) for row in rows]
 
@@ -218,3 +254,69 @@ class Store:
                 "SELECT * FROM api_keys WHERE key_hash = ? AND revoked = 0", (key_hash,)
             ).fetchone()
             return self._row_to_api_key(row) if row is not None else None
+
+    def record_api_usage(
+        self,
+        *,
+        api_key_id: str,
+        user_id: str,
+        decision_id: str,
+        model: str,
+        policy: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost: float,
+    ) -> None:
+        with self._lock:
+            self.conn.execute(
+                """
+                INSERT INTO api_usage (
+                    api_key_id, user_id, decision_id, model, policy,
+                    input_tokens, output_tokens, cost
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    api_key_id,
+                    user_id,
+                    decision_id,
+                    model,
+                    policy,
+                    input_tokens,
+                    output_tokens,
+                    cost,
+                ),
+            )
+            self.conn.commit()
+
+    def get_api_usage(self, user_id: str) -> dict[str, Any]:
+        with self._lock:
+            totals = self.conn.execute(
+                """
+                SELECT COUNT(*) AS request_count,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(cost), 0.0) AS total_cost
+                FROM api_usage
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            keys = self.conn.execute(
+                """
+                SELECT k.id, k.label, k.key_prefix,
+                       COUNT(u.id) AS request_count,
+                       COALESCE(SUM(u.input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(u.output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(u.cost), 0.0) AS total_cost
+                FROM api_keys AS k
+                LEFT JOIN api_usage AS u ON u.api_key_id = k.id AND u.user_id = k.user_id
+                WHERE k.user_id = ?
+                GROUP BY k.id, k.label, k.key_prefix
+                ORDER BY k.created_at
+                """,
+                (user_id,),
+            ).fetchall()
+            return {
+                **dict(totals),
+                "keys": [dict(row) for row in keys],
+            }

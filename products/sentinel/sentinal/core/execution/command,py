@@ -1,0 +1,20 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Generic, TypeVar
+
+from sentinal.core.executable import Executable
+from sentinal.core.execution.session import ExecutionSession
+
+TOutput = TypeVar("TOutput")
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionCommand(Generic[TOutput]):
+    """
+    Immutable command describing a workload that should be executed.
+    """
+
+    session: ExecutionSession
+
+    executable: Executable[object, TOutput]

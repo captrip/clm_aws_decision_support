@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinal"
+version = "0.1.0"
+description = "Hybrid compute runtime — dispatch agent work across CPU threads and GPU"
+requires-python = ">=3.13"
+license = "MIT"
+authors = [
+    {name = "YK Tripathi"},
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+gpu = ["torch>=2.0"]
+metal = ["pyobjc-framework-Metal>=9.0"]
+dashboard = ["rich>=13.0"]
+telemetry = [
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp>=1.20",
+]
+all = [
+    "torch>=2.0",
+    "pyobjc-framework-Metal>=9.0",
+    "rich>=13.0",
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp>=1.20",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "python-dotenv>=1.0",
+    "langchain-core>=0.3",
+    "langchain-openai>=0.3",
+    "langgraph>=0.2",
+    "ddgs>=9.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["sentinal*"]
+exclude = ["tests*", "experiment*", "docs*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

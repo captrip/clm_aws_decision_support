@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import io
 import os
 import pathlib
 import uuid
+import zipfile
+from dataclasses import dataclass
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .ask import ask as run_ask
 from .auth import SupabaseUser, required_supabase_user
+from .azure_openai import AzureOpenAIProvider
+from .bedrock import BedrockProvider
 from .cascade import Cascade, Question
 from .demo import (
     SimulatedCLMClient,
@@ -21,12 +27,13 @@ from .demo import (
 )
 
 from .features import DEFAULT_FEATURE_DIM, default_feature_fn
-from .models import ModelRegistry, ModelSpec, ProviderKind
+from .grader import AnswerGrader
+from .models import GraderSpec, ModelRegistry, ModelSpec, ProviderKind
 from .policies.base import InvalidSelectionError
 from .policies.clm import CLMPolicy, CLMUnavailableError, default_client
 from .policies.hybrid import HybridPolicy
 from .policies.linucb import LinUCBPolicy, LinUCBState
-from .providers import ProviderKind, ProviderRouter
+from .providers import ProviderRouter
 from .store import Store
 
 try:
@@ -38,21 +45,49 @@ except ImportError:
 _DATA_DIR = pathlib.Path(os.environ.get("CLM_DATA_DIR","data")).resolve()
 _DB_PATH = str(_DATA_DIR / "deployments.db")
 _LINUCB_SNAPSHOT_PATH = str(_DATA_DIR / "linucb.npz")
+_RUNTIME_MODE = os.environ.get("CLM_RUNTIME_MODE", "demo").strip().lower()
+if _RUNTIME_MODE not in {"demo", "production"}:
+    raise RuntimeError("CLM_RUNTIME_MODE must be either 'demo' or 'production'.")
 
 _store = Store(_DB_PATH)
-if not _store.list_diployments():
-    seed_demo_deployments(_store)
 
-_model_provider = SimulatedModelProvider(accuracy={})
+def _initialize_deployments(store: Store, mode: str) -> None:
+    if mode == "production" and store.get_metadata("registry_source") == "demo":
+        raise RuntimeError(
+            "Production mode cannot use a demo-seeded deployment database. "
+            "Configure a clean production CLM_DATA_DIR and add reviewed deployments."
+        )
+    if mode == "demo" and not store.list_deployments():
+        seed_demo_deployments(store)
+        store.set_metadata("registry_source", "demo")
+
+
+_initialize_deployments(_store, _RUNTIME_MODE)
+
+_demo_model_provider = SimulatedModelProvider(accuracy={})
 _grader = SimulatedGrader()
 
 _registry: ModelRegistry
 _provider_router: ProviderRouter
+_provider_adapters: dict[ProviderKind, Any]
 _accuracy: dict[str, float]
 _MODEL_DESCRIPTIONS: dict[str, str]
 
+def _provider_adapters_for_mode(mode: str) -> dict[ProviderKind, Any]:
+    if mode == "demo":
+        return {
+            ProviderKind.BEDROCK: _demo_model_provider,
+            ProviderKind.AZURE_OPENAI: _demo_model_provider,
+        }
+    if mode == "production":
+        return {
+            ProviderKind.BEDROCK: BedrockProvider(),
+            ProviderKind.AZURE_OPENAI: AzureOpenAIProvider(),
+        }
+    raise ValueError(f"unknown runtime mode {mode!r}")
+
 def _reduild_registry() -> None:
-    global _registry, _provider_router, _accuracy, _MODEL_DESCRIPTIONS
+    global _registry, _provider_router, _provider_adapters, _accuracy, _MODEL_DESCRIPTIONS
     rows = _store.list_deployments()
     _registry = ModelRegistry(
         ModelSpec(
@@ -69,10 +104,10 @@ def _reduild_registry() -> None:
         row["logical_name"]: row["sample_accuracy"] if row["sample_accuracy"] is not None else 0.5
         for row in rows
     }
-    _model_provider.accuracy = _accuracy
-    _provider_router = ProviderRouter(
-        _registry, {ProviderKind.BEDROCK: _model_provider, ProviderKind.AZURE_OPENAI: _model_provider}
-    )
+    if _RUNTIME_MODE == "demo":
+        _demo_model_provider.accuracy = _accuracy
+    _provider_adapters = _provider_adapters_for_mode(_RUNTIME_MODE)
+    _provider_router = ProviderRouter(_registry, _provider_adapters)
     _MODEL_DESCRIPTIONS = {name: f"{name} ({_registry[name].provider.value})" for name in _registry}
 
 _reduild_registry()
@@ -84,6 +119,8 @@ _linucb.restore(_LINUCB_SNAPSHOT_PATH)
 def _clm_client():
     if os.environ.get("CLM_BASE_URL"):
         return default_client()
+    if _RUNTIME_MODE == "production":
+        raise CLMUnavailableError("CLM_BASE_URL must be configured for clm and hybrid policies.")
     return SimulatedCLMClient(quality = _accuracy)
 
 def _build_policy(name: str):
@@ -95,6 +132,28 @@ def _build_policy(name: str):
     if name == "hybrid":
         return HybridPolicy(_linucb, client=client, model_descriptions=_MODEL_DESCRIPTIONS), _linucb
     raise HTTPException(status_code=422, detail=f"unknown policy {name!r}")
+
+def _build_grader():
+    if _RUNTIME_MODE == "demo":
+        return _grader
+    provider_name = os.environ.get("CLM_GRADER_PROVIDER")
+    model_name = os.environ.get("CLM_GRADER_MODEL")
+    if not provider_name or not model_name:
+        raise HTTPException(
+            status_code=503,
+            detail="CLM_GRADER_PROVIDER and CLM_GRADER_MODEL are required for production evaluations.",
+        )
+    try:
+        provider_kind = ProviderKind(provider_name)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="CLM_GRADER_PROVIDER must be bedrock or azure_openai.",
+        ) from error
+    return AnswerGrader(
+        provider=_provider_adapters[provider_kind],
+        grader=GraderSpec(provider=provider_kind, model_id=model_name),
+    )
 
 class RunRequest(BaseModel):
     question: str = Field(min_length=1)
@@ -108,6 +167,27 @@ class AskRequest(BaseModel):
     budget: float | None = 0.01
     policy: Literal["linucb", "clm", "hybrid"] = "linucb"
 
+
+class MAFDemoMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class MAFDemoRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    agent_name: str = Field(default="Workspace Assistant", min_length=1, max_length=80)
+    instructions: str = Field(
+        default="Be a reliable conversational assistant. Be direct, accurate, and clear. "
+        "If you are unsure, say so.",
+        min_length=1,
+        max_length=2000,
+    )
+    conversation: list[MAFDemoMessage] = Field(default_factory=list, max_length=10)
+    budget: float | None = Field(default=0.01, ge=0)
+    policy: Literal["linucb", "clm", "hybrid"] = "linucb"
+    quality_threshold: float = Field(default=0.65, ge=0, le=1)
+
+
 class FeedbackRequest(BaseModel):
     decision_id: str
     rating: Literal["up","down"]
@@ -120,7 +200,7 @@ class DeploymentRequest(BaseModel):
     input_cost_per_million: float = Field(ge=0.0)
     output_cost_per_million: float = Field(ge=0.0)
 
-    sample_accuracy: float = Field(default=0.5, ge=0.0, le=0.0)
+    sample_accuracy: float = Field(default=0.5, ge=0.0, le=1.0)
 
 class FeedbackImportRecord(BaseModel):
     question: str = Field(min_length=1)
@@ -135,29 +215,146 @@ class FeedbackImportRequest(BaseModel):
 class CreateApiKeyRequest(BaseModel):
     label: str | None = None
 
+@dataclass(frozen=True, slots=True)
+class ApiKeyPrincipal:
+    id: str
+    user_id: str
+
+
 def required_api_key(
         x_api_key: str | None = Header(default=None, alias="X-API-Key")
-) -> str:
+) -> ApiKeyPrincipal:
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing API key")
-    record = _store._verify_api_key(x_api_key)
+    record = _store.verify_api_key(x_api_key)
     if record is None:
         raise HTTPException(status_code=401, detail="Invalid API Key")
-    return record["user_id"]
+    return ApiKeyPrincipal(id=record["id"], user_id=record["user_id"])
 
-app = FastAPI(title="Routing Cascade")
+app = FastAPI(
+    title="MONA API",
+    version="1.0.0",
+    description="API-key-authenticated, policy-driven model selection and invocation.",
+)
 
+_allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CLM_CORS_ORIGINS",
+        "http://127.0.0.1:5173,http://localhost:5173",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+_PRODUCT_SOURCES = {
+    "sentinel": ("products/sentinel", "sentinel"),
+    "maf": ("products/maf", "maf"),
+}
+_ARCHIVE_EXCLUDED_DIRS = {
+    ".git",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+}
 
 
 @app.get("/")
 def health() -> dict[str, Any]:
     return {"service": "clm-linucb-decision-support", "status": "ok"}
+
+
+@app.post("/api/maf/demo")
+async def run_maf_conversation_demo(
+    body: MAFDemoRequest,
+    request: Request,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    _principal: ApiKeyPrincipal = Depends(required_api_key),
+) -> dict[str, Any]:
+    try:
+        from integration.conversational_demo import run_conversational_demo
+        from sentinal import MonaAPIError, MonaClient
+    except ImportError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The MAF/Sentinel demo runtime is not installed. Install the "
+                "products/maf and products/sentinel packages."
+            ),
+        ) from error
+
+    api_url = os.environ.get("MONA_API_URL", str(request.base_url).rstrip("/"))
+    client = MonaClient(api_key=x_api_key, base_url=api_url)
+    try:
+        return await run_conversational_demo(
+            client=client,
+            question=body.question,
+            agent_name=body.agent_name.strip(),
+            instructions=body.instructions.strip(),
+            conversation=[message.model_dump() for message in body.conversation],
+            policy=body.policy,
+            budget=body.budget,
+            quality_threshold=body.quality_threshold,
+        )
+    except MonaAPIError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.get("/api/products/{product}/download")
+def download_product(
+    product: str,
+    _principal: ApiKeyPrincipal = Depends(required_api_key),
+) -> StreamingResponse:
+    source_info = _PRODUCT_SOURCES.get(product)
+    if source_info is None:
+        raise HTTPException(status_code=404, detail="Unknown product package")
+
+    source_path = pathlib.Path(__file__).resolve().parents[2] / source_info[0]
+    if not source_path.is_dir():
+        raise HTTPException(status_code=404, detail="Product package is unavailable")
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for path in sorted(source_path.rglob("*")):
+            if path.is_symlink() or not path.is_file():
+                continue
+            relative_path = path.relative_to(source_path)
+            if any(part in _ARCHIVE_EXCLUDED_DIRS for part in relative_path.parts):
+                continue
+            if (
+                path.name == ".env"
+                or path.name.startswith(".env.")
+                or path.suffix in {
+                    ".db",
+                    ".log",
+                    ".npz",
+                    ".pyc",
+                    ".sqlite",
+                    ".sqlite3",
+                }
+            ):
+                continue
+            bundle.write(path, pathlib.Path(source_info[1]) / relative_path)
+
+    archive.seek(0)
+    return StreamingResponse(
+        archive,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{source_info[1]}-package.zip"'
+            )
+        },
+    )
+
 
 @app.post("/api/auth/keys")
 def create_api_key(body: CreateApiKeyRequest, user: SupabaseUser = Depends(required_supabase_user)) -> dict[str, Any]:
@@ -166,7 +363,7 @@ def create_api_key(body: CreateApiKeyRequest, user: SupabaseUser = Depends(requi
     return {**row,"api_key": raw_key}
 
 @app.get("/api/auth/keys")
-def list_api_keys(user: SupabaseUser = Depends(required_supabase_user)) -> dict[str, Any]:
+def list_api_keys(user: SupabaseUser = Depends(required_supabase_user)) -> list[dict[str, Any]]:
     return _store.list_api_keys(user.id)
 
 @app.delete("/api/auth/keys/{key_id}")
@@ -179,7 +376,7 @@ def revoke_api_key(
     return {"revoked": key_id}
 
 @app.get("/api/models")
-def list_models(_user_id:str = Depends(required_api_key)) -> list[dict[str, Any]]:
+def list_models(_principal: ApiKeyPrincipal = Depends(required_api_key)) -> list[dict[str, Any]]:
     return [
         {
             "name": name,
@@ -191,13 +388,13 @@ def list_models(_user_id:str = Depends(required_api_key)) -> list[dict[str, Any]
     ]
 
 @app.get("/api/deployments")
-def list_diployments(_user_id: str = Depends(required_api_key)) -> list[dict[str, Any]]:
+def list_diployments(_principal: ApiKeyPrincipal = Depends(required_api_key)) -> list[dict[str, Any]]:
     return _store.list_deployments()
 
 @app.post("/api/deployments")
 def add_deployment(
     body: DeploymentRequest,
-    _user_id: str = Depends(required_api_key)
+    _principal: ApiKeyPrincipal = Depends(required_api_key)
 ) -> dict[str,Any]:
     provider = ProviderKind(body.provider)
     try:
@@ -231,14 +428,14 @@ def add_deployment(
     return {"added": body.logical_name}
 
 @app.delete("/api/deployments/{logical_name}")
-def remove_deployment(logical_name: str, _user_id: str = Depends(required_api_key)) -> dict[str, Any]:
-    if not _store.deactivate_deploymnet(logical_name):
+def remove_deployment(logical_name: str, _principal: ApiKeyPrincipal = Depends(required_api_key)) -> dict[str, Any]:
+    if not _store.deactivate_deployment(logical_name):
         raise HTTPException(status_code=404, detail=f"Deployment not found {logical_name}")
     _reduild_registry()
     return {"removed": logical_name}
 
 @app.post("/api/ask")
-def ask_question(body: AskRequest, _user_id: str = Depends(required_api_key)) -> dict[str, Any]:
+def ask_question(body: AskRequest, principal: ApiKeyPrincipal = Depends(required_api_key)) -> dict[str, Any]:
     try:
         policy, linucb_state = _build_policy(body.policy)
         result = run_ask(
@@ -255,6 +452,16 @@ def ask_question(body: AskRequest, _user_id: str = Depends(required_api_key)) ->
         raise HTTPException(status_code=502, detail=str(error)) from error
 
     decision_id = str(uuid.uuid4())
+    _store.record_api_usage(
+        api_key_id=principal.id,
+        user_id=principal.user_id,
+        decision_id=decision_id,
+        model=result.model,
+        policy=body.policy,
+        input_tokens=result.usage.input_tokens,
+        output_tokens=result.usage.output_tokens,
+        cost=result.cost,
+    )
     if linucb_state is not None:
         _store.log_decision(decision_id,body.question,result.model,body.policy,result.feature, result.cost)
 
@@ -276,8 +483,12 @@ def ask_question(body: AskRequest, _user_id: str = Depends(required_api_key)) ->
         "feedback_eligible": linucb_state is not None,
     }
 
+@app.get("/api/usage")
+def get_api_usage(principal: ApiKeyPrincipal = Depends(required_api_key)) -> dict[str, Any]:
+    return _store.get_api_usage(principal.user_id)
+
 @app.post("/api/feedback")
-def submit_feedbck(body: FeedbackRequest, _user_id: str = Depends(required_api_key)) -> dict[str,Any]:
+def submit_feedbck(body: FeedbackRequest, _principal: ApiKeyPrincipal = Depends(required_api_key)) -> dict[str,Any]:
     reward = 1.0 if body.rating == "up" else 0.0
     decision = _store.attach_reward(body.decision_id, reward)
     if decision is None:
@@ -288,7 +499,7 @@ def submit_feedbck(body: FeedbackRequest, _user_id: str = Depends(required_api_k
     return {"applied": True}
 
 @app.post("/api/feedback/import")
-def import_feedback(body: FeedbackImportRequest, _user_id: str = Depends(required_api_key)) -> dict[str, Any]:
+def import_feedback(body: FeedbackImportRequest, _principal: ApiKeyPrincipal = Depends(required_api_key)) -> dict[str, Any]:
     applied = 0
     skipped: list[dict[str, Any]] =[]
     for i, record in enumerate(body.records):
@@ -314,13 +525,13 @@ def import_feedback(body: FeedbackImportRequest, _user_id: str = Depends(require
     return {"applied": applied, "skipped": skipped}
 
 @app.post("/api/run")
-def run_cascade(body: RunRequest, _user_id: str = Depends(required_api_key)) -> dict[str, Any]:
+def run_cascade(body: RunRequest, _principal: ApiKeyPrincipal = Depends(required_api_key)) -> dict[str, Any]:
     try:
         policy, linucb_state = _build_policy(body.policy)
         cascade = Cascade(
             policy=policy,
             router=_provider_router,
-            grader=_grader,
+            grader=_build_grader(),
             registry=_registry,
             max_attempts=body.max_attempts,
             linucb=linucb_state

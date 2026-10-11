@@ -1,0 +1,36 @@
+[project]
+name = "maf"
+version = "0.1.0"
+description = "Multi-agent workflow framework with Sentinel supervision"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+    "aiosqlite>=0.20",
+    "fastapi>=0.110",
+    "langchain>=0.3",
+    "langchain-openai>=0.3",
+    "langgraph>=0.2",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langgraph-swarm>=0.0.1",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools]
+py-modules = ["sentinel_maf_integration"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["MAF*", "MAFI*", "config*", "global_*", "integration*", "maf*", "ui_service*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

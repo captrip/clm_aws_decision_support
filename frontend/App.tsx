@@ -1,13 +1,14 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { apiRequest, currency, downloadProductPackage, type ApiKey, type AskResult, type Deployment, type MAFDemoMessage, type MAFDemoResult, type MAFDemoTraceStep, type Model, type Policy, type RunResult } from './src/api';
+import { apiRequest, currency, downloadProductPackage, type ApiKey, type AskResult, type Deployment, type Model, type Policy, type RunResult } from './src/api';
 import { supabase } from './src/supabase';
+import Studio from './src/studio/Studio';
 
-type Page = 'overview' | 'products' | 'maf_demo' | 'playground' | 'evaluate' | 'deployments' | 'keys' | 'feedback' | 'docs';
+type Page = 'overview' | 'products' | 'studio' | 'playground' | 'evaluate' | 'deployments' | 'keys' | 'feedback' | 'docs';
 const pages: { id: Page; label: string; glyph: string }[] = [
   { id: 'overview', label: 'Overview', glyph: '◫' },
   { id: 'products', label: 'Products', glyph: '⬡' },
-  { id: 'maf_demo', label: 'MAF demo', glyph: '✳' },
+  { id: 'studio', label: 'MAF Studio', glyph: '✳' },
   { id: 'playground', label: 'Playground', glyph: '⌁' },
   { id: 'evaluate', label: 'Evaluate', glyph: '◉' },
   { id: 'deployments', label: 'Deployments', glyph: '◈' },
@@ -119,7 +120,7 @@ function Overview({ models, deployments, apiKey, setPage, backendStatus }: {
       </div>}
       <div className="home-grid">
         <article className="panel home-feature"><span className="eyebrow">ASK / ROUTE</span><h2>Explore an answer.</h2><p>Submit a real question and let the selected policy choose a model. Review its rationale, token use, and cost.</p><button className="button button-primary" onClick={() => setPage('playground')}>Open playground <span>↗</span></button></article>
-        <article className="panel home-feature home-feature-gold"><span className="eyebrow">EVALUATE / LEARN</span><h2>Put routing to the test.</h2><p>Compare candidate models against an expected answer. Grading feedback helps the LinUCB policy learn.</p><button className="button button-outline" onClick={() => setPage('maf_demo')}>Open MAF agent demo <span>↗</span></button></article>
+        <article className="panel home-feature home-feature-gold"><span className="eyebrow">EVALUATE / LEARN</span><h2>Put routing to the test.</h2><p>Compare candidate models against an expected answer. Grading feedback helps the LinUCB policy learn.</p><button className="button button-outline" onClick={() => setPage('evaluate')}>Open evaluation <span>↗</span></button></article>
       </div>
       <div className="panel roster-panel">
         <div className="panel-title"><div><span className="eyebrow">MODEL PORTFOLIO</span><h2>Configured deployments</h2></div><button className="button-link" onClick={() => setPage('deployments')}>Manage models →</button></div>
@@ -173,117 +174,15 @@ function Products({ apiKey, setPage }: { apiKey: string; setPage: (page: Page) =
       </article>
       <article className="panel product-card">
         <span className="eyebrow">03 / MULTI-AGENT WORKFLOWS</span><h2>MAF</h2>
-        <p>Compose multi-agent workflows and run them under Sentinel supervision. Connect agent tasks to MONA with the same account-owned API key.</p>
+        <p>Build chatbots, workflows and agents with governed approvals, shared catalogues and live evaluation under Sentinel supervision, all in MAF Studio.</p>
         <div className="product-tags"><span>Python package</span><span>MAF + Sentinel</span></div>
         <pre><code>{`export MONA_API_URL="${import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8800'}"\nexport MONA_API_KEY="$CLM_API_KEY"\nunzip sentinel-package.zip && cd sentinel\npython -m pip install -e ".[dev]"\ncd .. && unzip maf-package.zip && cd maf\npython -m pip install -e ".[dev]"\n\nfrom sentinal import MonaClient\nmona = MonaClient()\n# Use mona.ask_async(...) in an MAF skill runner.`}</code></pre>
-        <button className="button button-outline" onClick={() => setPage('maf_demo')}>Launch MAF demo <span>↗</span></button>
+        <button className="button button-primary" onClick={() => setPage('studio')}>Open MAF Studio <span>↗</span></button>
         <button className="button button-outline" onClick={() => void download('maf')} disabled={busy === 'maf'}>{busy === 'maf' ? 'Preparing package…' : 'Download MAF source'} <span>↓</span></button>
       </article>
     </div>
     <p className="disclaimer">Sentinel and MAF downloads contain source packages, not embedded credentials. Use your own API key via environment variables. MONA remains the shared authenticated inference endpoint.</p>
   </section>;
-}
-
-function MAFDemo({ apiKey, setPage }: { apiKey: string; setPage: (page: Page) => void }) {
-  const [agentName, setAgentName] = useState('Workspace Assistant');
-  const [instructions, setInstructions] = useState('Be a reliable conversational assistant. Be direct, accurate, and clear. If you are unsure, say so.');
-  const [policy, setPolicy] = useState<Policy>('linucb');
-  const [qualityThreshold, setQualityThreshold] = useState('0.65');
-  const [draft, setDraft] = useState('');
-  const [messages, setMessages] = useState<MAFDemoMessage[]>([]);
-  const [lastRun, setLastRun] = useState<MAFDemoResult | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  async function send(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!apiKey || !draft.trim() || busy) return;
-    const question = draft.trim();
-    const priorConversation = messages.slice(-10);
-    setMessages([...messages, { role: 'user', content: question }]);
-    setDraft('');
-    setError('');
-    setLastRun(null);
-    setBusy(true);
-    try {
-      const result = await apiRequest<MAFDemoResult>('/api/maf/demo', {
-        method: 'POST',
-        body: JSON.stringify({
-          question,
-          agent_name: agentName,
-          instructions,
-          conversation: priorConversation,
-          policy,
-          budget: 0.01,
-          quality_threshold: Number(qualityThreshold),
-        }),
-      }, apiKey);
-      setMessages((current) => [...current, { role: 'assistant', content: result.answer }]);
-      setLastRun(result);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The MAF demo could not complete.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function clearConversation() {
-    setMessages([]);
-    setLastRun(null);
-    setError('');
-  }
-
-  return <section className="console-view">
-    <PageHeading eyebrow="MAF × MONA × SENTINEL" title="Build a conversational agent." description="MAF assembles your agent, MONA selects and calls the model, and Sentinel evaluates the draft and steers a revision when needed." />
-    {!apiKey && <div className="callout"><div><span className="eyebrow">API KEY REQUIRED</span><h2>Connect your account key to run the agent.</h2><p>Each routed model call uses your MONA key and is counted in your account usage.</p></div><button className="button button-primary" onClick={() => setPage('keys')}>Open API keys <span>→</span></button></div>}
-    {error && <p className="form-error page-alert" role="alert">{error}</p>}
-    <div className="agent-demo-layout">
-      <aside className="panel agent-config">
-        <span className="eyebrow">01 / MAF AGENT FACTORY</span><h2>Configure your agent</h2>
-        <label htmlFor="maf-agent-name">Agent name</label>
-        <input id="maf-agent-name" value={agentName} maxLength={80} onChange={(event) => setAgentName(event.target.value)} />
-        <label htmlFor="maf-agent-instructions">Agent instructions</label>
-        <textarea id="maf-agent-instructions" rows={6} maxLength={2000} value={instructions} onChange={(event) => setInstructions(event.target.value)} />
-        <label htmlFor="maf-agent-policy">MONA routing policy</label>
-        <PolicySelect id="maf-agent-policy" value={policy} onChange={setPolicy} />
-        <label htmlFor="maf-quality">Sentinel quality threshold <strong>{qualityThreshold}</strong></label>
-        <input id="maf-quality" type="range" min="0.25" max="1" step="0.05" value={qualityThreshold} onChange={(event) => setQualityThreshold(event.target.value)} />
-        <p className="form-note">Sentinel scores draft completeness from response detail, then can issue one steering instruction and rerun the agent through MONA.</p>
-        <div className="product-tags"><span>MAF agent</span><span>MONA-routed</span><span>Sentinel-governed</span></div>
-      </aside>
-      <div className="panel agent-chat">
-        <div className="panel-title"><div><span className="eyebrow">02 / CONVERSATION</span><h2>{agentName || 'New agent'}</h2></div><button className="button-link" onClick={clearConversation} disabled={busy || !messages.length}>New conversation</button></div>
-        <div className="chat-messages" aria-live="polite">
-          {!messages.length && !busy && <EmptyState title="Your agent is ready" detail="Ask a question to run the configured MAF agent through MONA and Sentinel." />}
-          {messages.map((message, index) => <article key={`${index}-${message.role}`} className={`chat-message ${message.role}`}><span>{message.role === 'user' ? 'YOU' : agentName.toUpperCase()}</span><p>{message.content}</p></article>)}
-          {busy && <article className="chat-message assistant"><span>MAF → MONA → SENTINEL</span><p className="typing">Creating agent response, evaluating quality, and checking for steering…</p></article>}
-        </div>
-        <form className="agent-composer" onSubmit={(event) => void send(event)}>
-          <textarea aria-label="Message your MAF agent" rows={3} maxLength={4000} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="What should your agent help with?" />
-          <button className="button button-primary" type="submit" disabled={!apiKey || busy || !draft.trim()}>{busy ? 'Running agent…' : 'Send to agent'} <span>↗</span></button>
-        </form>
-        {lastRun && <div className="agent-run-report">
-          <div className="agent-run-summary"><span className="eyebrow">03 / SENTINEL RUNTIME REPORT</span><div className="product-tags"><span>{lastRun.sentinel.status}</span><span>{pretty(lastRun.policy)} policy</span><span>{lastRun.model}</span><span>{lastRun.elapsed_ms.toFixed(0)} ms</span><span>{currency(lastRun.cost)}</span></div><p>{lastRun.rationale}</p></div>
-          <div className="agent-trace">{lastRun.sentinel.trace.map((step, index) => <MAFTraceStep key={`${step.stage}-${index}`} step={step} />)}</div>
-          <p className="form-note">Execution {lastRun.execution_id} · MONA decision {lastRun.decision_id || 'not returned'}. Additional steering passes make additional MONA calls and may incur additional provider cost.</p>
-        </div>}
-      </div>
-    </div>
-  </section>;
-}
-
-function MAFTraceStep({ step }: { step: MAFDemoTraceStep }) {
-  const title = step.stage === 'maf_agent'
-    ? `${step.agent || 'MAF agent'} · draft ${step.attempt || 1}`
-    : step.stage === 'sentinel_evaluation'
-      ? `Sentinel quality evaluation · ${step.score?.toFixed(2) ?? '—'} / ${step.threshold?.toFixed(2) ?? '—'}`
-      : 'Sentinel steering';
-  const detail = step.stage === 'maf_agent'
-    ? `${step.model || 'MONA'} · ${pretty(step.provider || 'provider')} · ${step.elapsed_ms?.toFixed(0) ?? '—'} ms · ${currency(step.cost || 0)}`
-    : step.stage === 'sentinel_evaluation'
-      ? step.instruction || (step.correction ? `Correction: ${step.correction}` : 'Draft met the configured threshold; no correction required.')
-      : step.instruction || 'Instruction applied to the next MAF agent pass.';
-  return <article className={`agent-trace-step ${step.stage}`}><i aria-hidden="true" /><div><b>{title}</b><p>{detail}</p></div><StatusPill tone={step.stage === 'sentinel_steering' ? 'gold' : 'muted'}>{step.stage === 'maf_agent' ? 'routed' : step.stage === 'sentinel_steering' ? 'steered' : step.correction || 'evaluated'}</StatusPill></article>;
 }
 
 function PolicySelect({ id, value, onChange }: { id: string; value: Policy; onChange: (policy: Policy) => void }) {
@@ -768,7 +667,7 @@ export default function App() {
   let content: ReactNode;
   if (page === 'overview') content = <Overview models={models} deployments={deployments} apiKey={apiKey} setPage={setPage} backendStatus={backendStatus} />;
   else if (page === 'products') content = <Products apiKey={apiKey} setPage={setPage} />;
-  else if (page === 'maf_demo') content = <MAFDemo apiKey={apiKey} setPage={setPage} />;
+  else if (page === 'studio') content = <Studio accessToken={session.access_token} apiKey={apiKey} openKeys={() => setPage('keys')} />;
   else if (page === 'playground') content = <Playground apiKey={apiKey} />;
   else if (page === 'evaluate') content = <Evaluation apiKey={apiKey} />;
   else if (page === 'deployments') content = <Deployments apiKey={apiKey} models={models} deployments={deployments} onRefresh={refreshWorkspace} />;

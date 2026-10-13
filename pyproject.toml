@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 web = [
+    "ag-ui-protocol>=0.1.10",
     "fastapi>=0.110",
     "numpy>=1.26",
     "python-dotenv>=1.0",
@@ -29,6 +30,7 @@ azure = [
     "azure-identity>=1.17",
 ]
 production = [
+    "ag-ui-protocol>=0.1.10",
     "fastapi>=0.110",
     "numpy>=1.26",
     "python-dotenv>=1.0",

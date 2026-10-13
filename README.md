@@ -21,10 +21,31 @@ MAF together. Create an account-owned API key under **API keys**; the same
 `X-API-Key` credential authenticates MONA requests, Sentinel's `MonaClient`,
 and MAF skill integrations that call MONA. The console offers authenticated
 source-package downloads for Sentinel and MAF. Package downloads do not embed
-credentials. The **MAF demo** page lets a user configure an agent, chat with it,
-and inspect its MONA routing and Sentinel evaluation/steering trace. The
-integrated demo endpoint is `POST /api/maf/demo` and requires the account's
-`X-API-Key`.
+credentials.
+
+### MAF Studio
+
+The MAF card on **Products** opens **MAF Studio**, a live workspace for the
+workflow and agent lifecycle. Work moves between personas (Chatbot Builder,
+Workflow Builder, Agent Builder, AI Ethics & Compliance Champion, AI Governance
+Manager) through shared workflow and agent catalogues. It is backed by the
+`/api/maf` FastAPI router (`src/clm_aws_decision_support/maf_api`):
+
+- State lives in SQLite (`$CLM_DATA_DIR/maf.db`). Every transition is checked
+  server-side and written to an audit log.
+- Identity is the Supabase bearer token. Personas are assigned per email by an
+  admin in the Studio's Team tab. Admins come from `MAF_ADMIN_EMAILS`; outside
+  `CLM_RUNTIME_MODE=production` the first user becomes admin when none exists.
+- `MAF_SEPARATION_OF_DUTIES` (default on in production) stops a reviewer from
+  approving work they submitted.
+- Evaluation runs and the live feed use the [AG-UI](https://docs.ag-ui.com)
+  protocol over server-sent events: `POST /api/maf/requests/{id}/agui` streams a
+  MONA + Sentinel run (steps, tool calls, Sentinel events, answer) and
+  `GET /api/maf/stream` pushes state snapshots to every open session.
+  Evaluation also requires the account's `X-API-Key` and the MAF/Sentinel
+  runtime (Python 3.13+).
+
+The earlier single-call endpoint `POST /api/maf/demo` remains available.
 
 ## Local development
 

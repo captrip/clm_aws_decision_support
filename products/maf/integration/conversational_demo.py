@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -23,6 +24,7 @@ from sentinal.core.executable import Executable
 from sentinal.runtime.runtime import SentinelRuntime
 
 DemoPolicy = Literal["linucb", "clm", "hybrid"]
+EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -112,12 +114,22 @@ class MAFConversationalWorkflow(Executable[dict[str, Any], dict[str, Any]]):
         conversation: list[dict[str, str]],
         max_steering_passes: int,
         judge: ResponseQualityJudge,
+        on_event: EventCallback | None = None,
     ) -> None:
+        self.on_event = on_event
         self.agent = agent
         self.query = query
         self.conversation = conversation
         self.max_steering_passes = max_steering_passes
         self.judge = judge
+
+    async def _emit(self, event: dict[str, Any]) -> None:
+        if self.on_event is not None:
+            await self.on_event(event)
+
+    async def _record(self, trace: list[dict[str, Any]], event: dict[str, Any]) -> None:
+        trace.append(event)
+        await self._emit(event)
 
     async def execute(
         self,
@@ -140,6 +152,14 @@ class MAFConversationalWorkflow(Executable[dict[str, Any], dict[str, Any]]):
         final: dict[str, Any] | None = None
 
         for attempt in range(self.max_steering_passes + 1):
+            await self._emit(
+                {
+                    "stage": "maf_agent",
+                    "status": "started",
+                    "agent": self.agent.name,
+                    "attempt": attempt + 1,
+                }
+            )
             started = time.perf_counter()
             agent_result = await self.agent.arun(state)
             raw_response = agent_result["raw"]
@@ -167,7 +187,8 @@ class MAFConversationalWorkflow(Executable[dict[str, Any], dict[str, Any]]):
                 )
             )
             session.update_memory("latest_answer", content)
-            trace.append(
+            await self._record(
+                trace,
                 {
                     "stage": "maf_agent",
                     "agent": agent_result["agent"],
@@ -187,7 +208,8 @@ class MAFConversationalWorkflow(Executable[dict[str, Any], dict[str, Any]]):
             corrections = session.drain_corrections()
             if not corrections:
                 if attempt == 0:
-                    trace.append(
+                    await self._record(
+                        trace,
                         {
                             "stage": "sentinel_evaluation",
                             **self.judge.evaluations[0],
@@ -197,7 +219,8 @@ class MAFConversationalWorkflow(Executable[dict[str, Any], dict[str, Any]]):
                 break
 
             correction = corrections[-1]
-            trace.append(
+            await self._record(
+                trace,
                 {
                     "stage": "sentinel_evaluation",
                     **self.judge.evaluations[0],
@@ -213,7 +236,8 @@ class MAFConversationalWorkflow(Executable[dict[str, Any], dict[str, Any]]):
 
             state["steering_instruction"] = correction.note or ""
             session.update_memory("sentinel_steering", state["steering_instruction"])
-            trace.append(
+            await self._record(
+                trace,
                 {
                     "stage": "sentinel_steering",
                     "status": "applied",
@@ -248,6 +272,7 @@ async def run_conversational_demo(
     budget: float | None,
     quality_threshold: float,
     max_steering_passes: int = 1,
+    on_event: EventCallback | None = None,
 ) -> dict[str, Any]:
     model = MonaChatAdapter(client, policy=policy, budget=budget)
     agent = BaseMAFIAgent(
@@ -270,6 +295,7 @@ async def run_conversational_demo(
         conversation=conversation[-10:],
         max_steering_passes=max_steering_passes,
         judge=judge,
+        on_event=on_event,
     )
     session = ExecutionSession(
         executable=workflow,

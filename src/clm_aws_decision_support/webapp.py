@@ -252,6 +252,10 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+from .maf_api import create_maf_router  # noqa: E402
+
+app.include_router(create_maf_router(api_key_dependency=required_api_key))
+
 _PRODUCT_SOURCES = {
     "sentinel": ("products/sentinel", "sentinel"),
     "maf": ("products/maf", "maf"),

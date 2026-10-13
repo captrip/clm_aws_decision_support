@@ -106,7 +106,7 @@ export interface MAFDemoResult {
   };
 }
 
-const baseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8800').replace(/\/+$/, '');
+export const baseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8800').replace(/\/+$/, '');
 
 export async function downloadProductPackage(
   product: 'sentinel' | 'maf',
